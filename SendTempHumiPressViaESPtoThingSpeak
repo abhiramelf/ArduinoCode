@@ -1,0 +1,190 @@
+
+
+//DHT22 connection
+// Connect pin 1 (on the left) of the sensor to +5V
+// Connect pin 2 of the sensor to whatever your DHTPIN is
+// Connect pin 4 (on the right) of the sensor to GROUND
+// Connect a 10K resistor from pin 2 (data) to pin 1 (power) of the sensor
+
+#include "DHT.h"
+#define DHTPIN 13     //digital pin
+#include <Adafruit_Sensor.h>
+#include <Adafruit_BMP085_U.h>
+Adafruit_BMP085_Unified bmp = Adafruit_BMP085_Unified(10085);
+#include <Wire.h>
+/*#include <LCD.h>
+#include <LiquidCrystal_I2C.h>
+#define I2C_ADDR    0x27  // Define I2C Address where the PCF8574A is
+#define BACKLIGHT_PIN     3
+#define En_pin  2
+#define Rw_pin  1
+#define Rs_pin  0
+#define D4_pin  4
+#define D5_pin  5
+#define D6_pin  6
+#define D7_pin  7*/
+#define DHTTYPE DHT22   // DHT 22  (AM2302)
+//LiquidCrystal_I2C	lcd(I2C_ADDR,En_pin,Rw_pin,Rs_pin,D4_pin,D5_pin,D6_pin,D7_pin);
+DHT dht(DHTPIN, DHTTYPE);
+
+#include <SoftwareSerial.h> //Software Serial is needed to interface with ESP8266 because the hardware serial 
+//is being used for monitoring Serial line with computer during trouble shooting.
+SoftwareSerial ESP8266(10,11);//RX,TX
+
+
+
+#define IP "184.106.153.149" // thingspeak.com IP address; see their website for more detail
+String GET = "GET /update?api_key=PBYP9SAE447AVT24&field"; // you channel will have unique code
+String field1="1=";
+String field2="2=";
+String field3="3=";
+String field4="4=";
+
+float h_=0.0,hi_=0.0,f_=0.0,p_=0.0;
+
+void setup() {
+  // put your setup code here, to run once:
+  /*lcd.begin (16,2);
+  lcd.setBacklightPin(BACKLIGHT_PIN,POSITIVE);
+  lcd.setBacklight(HIGH);
+  lcd.home ();*/              
+  Serial.begin(9600); // this is to start serial monitoring with your Arduino IDE Serial monitor.
+  ESP8266.begin(9600); // this is to start serial communication with the ESP via Software Serial.
+  ESP8266.println("AT+RST"); // this resets the ESP8266.
+  Serial.println("AT+RST"); // this is just echoing the command to your serial monitor so you can
+  // follow what is going on - this is not really needed.
+  // through out the code below I echo almost everything to the Serial monitor which you
+  // you don't have to do and can eliminate from the code.
+ 
+  delay(2000);
+  dht.begin();
+  if(!bmp.begin())
+  {
+    /* There was a problem detecting the BMP085 ... check your connections */
+    Serial.print("Ooops, no BMP085 detected ... Check your wiring or I2C ADDR!");
+    while(1);
+  }
+  ESP8266.println("AT");
+  Serial.println("AT");
+  
+  delay(5000);
+  if(ESP8266.find("OK")){
+      Serial.println("OK");  
+  
+      Serial.println("Connected");
+  }    
+}
+
+void loop() {
+  delay(2000);
+  sensors_event_t event;
+  bmp.getEvent(&event);
+  char buffer[16];
+  Serial.println("in the main loop");
+  // Reading temperature or humidity takes about 250 milliseconds!
+  // Sensor readings may also be up to 2 seconds 'old' (its a very slow sensor)
+  float h = dht.readHumidity();
+  // Read temperature as Celsius
+  //float t = dht.readTemperature();
+  // Read temperature as Fahrenheit
+  float f = dht.readTemperature(true);
+  // Compute heat index
+  // Must send in temp in Fahrenheit!
+  float hi = dht.computeHeatIndex(f, h);
+  /*lcd.clear();
+  lcd.setCursor(0,0);
+  lcd.print("H:");lcd.print(h,2);
+  lcd.print(" F:");lcd.print(f,2);
+  lcd.setCursor(0,1);
+  lcd.print("HI:");lcd.print(hi,2);*/
+  float temperature;
+  bmp.getTemperature(&temperature);
+  float seaLevelPressure = 1000.3; // adjusted for Minnesota 1mb = 1hPa
+  //lcd.print("mb:");lcd.print(event.pressure,2);
+  
+  Serial.print("Humidity: "); 
+  Serial.print(h);
+  Serial.print(" %\t");
+  Serial.print("Temperature: "); 
+  //Serial.print(t);
+  //Serial.print(" *C ");
+  Serial.print(f);
+  Serial.println(" *F\t");
+  Serial.print("Heat index: ");
+  Serial.print(hi);
+  Serial.println(" *F");
+  Serial.print("Altitude in meter: ");
+  Serial.println(bmp.pressureToAltitude(seaLevelPressure,event.pressure,temperature));
+  Serial.print("Pressure in mb or hPA: ");
+  Serial.println(event.pressure);
+  String tempF=dtostrf(f,4,1,buffer);
+  Serial.println(tempF);
+  if(abs(f-f_)>=0.2) { 
+    update(tempF,field1,"f_");
+    f_=f;
+  }
+  //delay(120000);
+  String humidity=dtostrf(h,4,1,buffer);
+  Serial.println(humidity);
+  if (abs(h-h_)>=0.5) {
+    update(humidity,field2,"h_");
+    h_=h;
+  }
+  //delay(120000);
+  String heatindex=dtostrf(hi,4,1,buffer);
+  Serial.println(heatindex);
+  if (abs(hi-hi_)>=0.1) {
+     update(heatindex,field3,"hi_");
+     hi_=hi;
+  }   
+    
+  String pressurehPA=dtostrf(event.pressure,4,1,buffer);
+  Serial.println(pressurehPA);
+  if (abs(event.pressure-p_)>1.0) {
+    update(pressurehPA,field4,"p_");
+    p_=event.pressure;
+  }
+  delay(1000);
+  Serial.println("loop-de-loop");  
+}
+
+void update(String value, String field, String previous_value_var){
+
+  Serial.println("in the update loop"); 
+  ESP8266.println("AT+RST"); // it seems that mine works better if I reset it everytime before I do CIPSTART
+  Serial.println("AT+RST");
+  delay(5000);
+  String cmd = "AT+CIPSTART=\"TCP\",\""; //standard code. see https://github.com/espressif/esp8266_at/wiki //
+  cmd += IP; // += is concatenating the previous cmd string with the content of IP
+  cmd += "\",80"; // same thing here it just keep adding stuff to the cmd string content
+
+  ESP8266.println(cmd);//type in the string in cmd into the ESP8266
+  Serial.println(cmd);
+  delay(5000);
+  
+  if(ESP8266.find("Error")){
+    Serial.println("AT+CIPSTART Error");
+    return;
+  }
+  cmd = GET;
+  cmd += field;
+  cmd += value;
+  cmd += "\r\n\r\n"; // it seems that this part is important, to input enough \r\n, mine does not work if I only have one pair.
+  ESP8266.print("AT+CIPSEND="); 
+  ESP8266.println(cmd.length());
+  Serial.print("AT+CIPSEND=");
+  Serial.println(cmd.length());
+  delay(17000);
+  if(ESP8266.find(">")){ // if ESP8266 return the > prompt back from the CIPSEND command, you are set, if not something is wrong
+    ESP8266.print(cmd); //type in the GET command string and done
+    Serial.print(">");
+    Serial.println(cmd);
+    previous_value_var=value;    
+  }
+  else
+  {
+   //Serial.println("AT+CIPCLOSE"); //this command somehow does not work and always return errors so I just comment it out
+   Serial.println("AT+CIPSEND error");
+  }
+
+}
